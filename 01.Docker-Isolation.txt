@@ -1,0 +1,78 @@
+docker run --name c1 -d ubuntu sh -c "sleep 1d"
+docker run --name c2 -d ubuntu sh -c "sleep 1d"
+
+docker exec -it c1 bash
+root@b0cc0c076d7e:/# ps -aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
+root           7  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
+root           8  0.6  0.1   4768  4236 pts/0    Ss   13:54   0:00 bash
+root          15  0.0  0.1   6752  4168 pts/0    R+   13:54   0:00 ps -aux
+root@b0cc0c076d7e:/# uname -r
+6.8.0-147-generic -- kernal version
+root@b0cc0c076d7e:/# exit
+exit
+
+docker exec -it c2 bash
+root@101ffdbe8009:/# ps -aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   2880  2044 ?        Ss   13:53   0:00 sh -c sleep 1d
+root           7  0.0  0.3  17644  8144 ?        S    13:53   0:00 sleep 1d
+root           8  0.3  0.1   4768  4068 pts/0    Ss   14:09   0:00 bash
+root          15  0.0  0.1   6752  4100 pts/0    R+   14:09   0:00 ps -aux
+root@101ffdbe8009:/# uname -r
+6.8.0-147-generic -- kernal version
+root@101ffdbe8009:/# exit
+exit
+
+root@controlplane:~$ uname -a
+Linux controlplane 6.8.0-147-generic #147-Ubuntu SMP PREEMPT_DYNAMIC Thu Sep 24 11:33:16 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+
+root@controlplane:~$ uname -r
+6.8.0-147-generic -- same in both containers
+
+root@controlplane:~$ ps -aux | grep sleep
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root       33696  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d -- Matching with c1
+root       33726  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
+root       37655  0.0  0.0   2880  2044 ?        Ss   13:53   0:00 sh -c sleep 1d -- Matching with c2
+root       37683  0.0  0.3  17644  8144 ?        S    13:53   0:00 sleep 1d
+root       66906  0.0  0.0   2700  1680 ?        S    14:09   0:00 sleep 30
+root       67309  0.0  0.0   3532  1876 pts/1    S+   14:09   0:00 grep --color=auto sleep
+
+
+######### I want both to run both containers on same PID ##########
+docker rm c2 --force
+docker run --name c2 --pid=container:c1 -d ubuntu sh -c "sleep 1d"
+
+docker exec -it c2 bash
+root@a888334c16ce:/# ps -aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
+root           7  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
+root          17  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
+root          23  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
+root          24  0.6  0.1   4768  4212 pts/0    Ss   14:23   0:00 bash
+root          31  0.0  0.1   6752  4144 pts/0    R+   14:23   0:00 ps -aux
+root@a888334c16ce:/# exit
+exit
+
+docker exec -it c1 bash
+root@b0cc0c076d7e:/# ps -aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
+root           7  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
+root          17  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
+root          23  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
+root          32  0.4  0.1   4768  4220 pts/0    Ss   14:23   0:00 bash
+root          39  0.0  0.1   6752  4104 pts/0    R+   14:24   0:00 ps -aux
+root@b0cc0c076d7e:/# exit
+exit
+
+root@controlplane:~$ ps -aux | grep sleep
+root       33696  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
+root       33726  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
+root       89214  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
+root       89241  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
+root       93705  0.0  0.0   2700  1684 ?        S    14:23   0:00 sleep 30
+root       94150  0.0  0.0   3532  1880 pts/1    S+   14:24   0:00 grep --color=auto sleep
