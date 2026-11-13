@@ -1,3 +1,5 @@
+Isolation and CG group for Containers
+-------------------------------------
 docker run --name c1 -d ubuntu sh -c "sleep 1d"
 docker run --name c2 -d ubuntu sh -c "sleep 1d"
 
@@ -43,36 +45,35 @@ root       67309  0.0  0.0   3532  1876 pts/1    S+   14:09   0:00 grep --color=
 
 ######### I want both to run both containers on same PID ##########
 docker rm c2 --force
-docker run --name c2 --pid=container:c1 -d ubuntu sh -c "sleep 1d"
+docker run --name c2 --pid=container:c1 -d ubuntu sh -c "sleep 99d"
 
 docker exec -it c2 bash
-root@a888334c16ce:/# ps -aux
+root@1ccb4a9ee258:/# ps -aux
 USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
-root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
+root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d -- able to see c1 PID
 root           7  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
-root          17  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
-root          23  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
-root          24  0.6  0.1   4768  4212 pts/0    Ss   14:23   0:00 bash
-root          31  0.0  0.1   6752  4144 pts/0    R+   14:23   0:00 ps -aux
-root@a888334c16ce:/# exit
-exit
+root          40  0.2  0.0   2880  1988 ?        Ss   14:29   0:00 sh -c sleep 99d
+root          46  0.0  0.3  17644  7892 ?        S    14:29   0:00 sleep 99d
+root          47  0.6  0.1   4768  4216 pts/0    Ss   14:29   0:00 bash
+root          54  0.0  0.1   6752  4024 pts/0    R+   14:29   0:00 ps -aux
 
 docker exec -it c1 bash
 root@b0cc0c076d7e:/# ps -aux
 USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
 root           1  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
 root           7  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
-root          17  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
-root          23  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
-root          32  0.4  0.1   4768  4220 pts/0    Ss   14:23   0:00 bash
-root          39  0.0  0.1   6752  4104 pts/0    R+   14:24   0:00 ps -aux
-root@b0cc0c076d7e:/# exit
-exit
+root          40  0.0  0.0   2880  1988 ?        Ss   14:29   0:00 sh -c sleep 99d -- able to see c2 PID
+root          46  0.0  0.3  17644  7892 ?        S    14:29   0:00 sleep 99d
+root          55  0.7  0.1   4768  4104 pts/0    Ss   14:30   0:00 bash
+root          63  0.0  0.1   6752  4120 pts/0    R+   14:30   0:00 ps -aux
 
 root@controlplane:~$ ps -aux | grep sleep
 root       33696  0.0  0.0   2880  1916 ?        Ss   13:51   0:00 sh -c sleep 1d
 root       33726  0.0  0.3  17644  7804 ?        S    13:51   0:00 sleep 1d
-root       89214  0.0  0.0   2880  1984 ?        Ss   14:21   0:00 sh -c sleep 1d
-root       89241  0.0  0.3  17644  7792 ?        S    14:21   0:00 sleep 1d
-root       93705  0.0  0.0   2700  1684 ?        S    14:23   0:00 sleep 30
-root       94150  0.0  0.0   3532  1880 pts/1    S+   14:24   0:00 grep --color=auto sleep
+root      103346  0.0  0.0   2880  1988 ?        Ss   14:29   0:00 sh -c sleep 99d
+root      103379  0.0  0.3  17644  7892 ?        S    14:29   0:00 sleep 99d
+root      104467  0.0  0.0   2700  1684 ?        S    14:29   0:00 sleep 30
+root      105175  0.0  0.0   3532  1880 pts/1    S+   14:30   0:00 grep --color=auto sleep
+
+
+Note: If container c1 is compromised, container c2 may also be at risk, and vice versa, because both containers share the same underlying Linux kernel.
