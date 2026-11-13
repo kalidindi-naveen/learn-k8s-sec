@@ -1,0 +1,130 @@
+NetworkPolicies: A set of rules that define which network traffic is allowed or denied for Pods.
+CNI (Calico): Implements NetworkPolicies using iptables or eBPF to allow or block traffic between Pods, including Pods across different namespaces.
+
+root@controlplane:~$ k run fe --image nginx
+pod/fe created
+root@controlplane:~$ k run be --image nginx
+pod/be created
+
+root@controlplane:~$ k expose po fe --port 80
+service/fe exposed
+root@controlplane:~$ k expose po be --port 80
+service/be exposed
+
+root@controlplane:~$ k get svc
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+be           ClusterIP   10.98.205.146   <none>        80/TCP    2s
+fe           ClusterIP   10.109.127.89   <none>        80/TCP    7s
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP   8d
+
+# 100% work because k8s allow all traffic by default
+k exec -it fe -- curl be
+k exec -it be -- curl fe
+
+### Block all traffic within namespace
+root@controlplane:~$ vi deny.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  - Ingress
+
+root@controlplane:~$ k apply -f deny.yml 
+networkpolicy.networking.k8s.io/default-deny created
+
+# both will get timeout
+k exec -it fe -- curl be
+k exec -it be -- curl fe
+
+
+# I want fe can talk to be??
+fe --> be
+fe: egrees
+be: ingress
+
+root@controlplane:~$ vi fe-be.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fe-be
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      run: fe
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          run: be
+
+root@controlplane:~$ k apply -f fe-be.yml 
+networkpolicy.networking.k8s.io/fe-be created
+
+
+root@controlplane:~$ vi be-fe.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: be-fe-np
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      run: be
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          run: fe
+
+root@controlplane:~$ k apply -f be-fe.yml 
+networkpolicy.networking.k8s.io/be-fe-np created
+
+root@controlplane:~$ k get netpol
+NAME           POD-SELECTOR   AGE
+be-fe-np       run=be         2m54s
+default-deny   <none>         27m
+fe-be          run=fe         4m49s
+
+# Not Work
+root@controlplane:~$ k exec -it fe -- curl be
+^Ccommand terminated with exit code 130
+
+# Work
+root@controlplane:~$ k exec fe -- curl 192.168.1.234
+
+Note: Need to allow DNS by modifying defaul-deny.yml
+root@controlplane:~$ vi deny.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  - to:
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+root@controlplane:~$ k apply -f deny.yml 
+networkpolicy.networking.k8s.io/default-deny configured
+
+# Works
+root@controlplane:~$ k exec -it fe -- curl be 
