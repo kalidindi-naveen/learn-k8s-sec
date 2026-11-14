@@ -128,3 +128,48 @@ networkpolicy.networking.k8s.io/default-deny configured
 
 # Works
 root@controlplane:~$ k exec -it fe -- curl be 
+
+#### Communication with different ns??
+root@controlplane:~$ k create ns casandra
+namespace/casandra created
+root@controlplane:~$ k get ns --show-labels  | grep casandra
+casandra             Active   82s   kubernetes.io/metadata.name=casandra
+
+root@controlplane:~$ k -n casandra run casandra --image nginx
+pod/casandra created
+root@controlplane:~$ k get po -n casandra --show-labels 
+NAME       READY   STATUS    RESTARTS   AGE   LABELS
+casandra   1/1     Running   0          16s   run=casandra
+root@controlplane:~$ k get po -n casandra -o wide
+NAME       READY   STATUS    RESTARTS   AGE   IP              NODE     NOMINATED NODE   READINESS GATES
+casandra   1/1     Running   0          52s   192.168.1.233   node01   <none>           <none>
+
+# Fail because we restricted default namespace
+k exec be -- curl 192.168.1.233
+
+be -- egress
+casandra -- all allowed [no restriction]
+
+root@controlplane:~$ vi be-casandra.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: be-casandra
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      run: be
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: casandra
+
+root@controlplane:~$ k apply -f be-casandra.yml 
+networkpolicy.networking.k8s.io/be-casandra created
+
+# works
+root@controlplane:~$ k exec be -- curl 192.168.1.233
