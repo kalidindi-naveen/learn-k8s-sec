@@ -1,0 +1,87 @@
+RBAC
+----
+k api-resources
+
+Role, RoleBinding
+ClusterRole, ClusterRoleBinding
+
+Permission  Definition	        Binding	Scope
+Role	      RoleBinding	        Namespace
+ClusterRole	RoleBinding	        Namespace
+ClusterRole	ClusterRoleBinding	Cluster-wide
+
+Note: Be careful with clusterrole bindings -- it will access to all ns and in future create new ns it will apply to that also.
+
+root@controlplane:~$ k create ns blue    
+namespace/blue created
+root@controlplane:~$ k create ns red  
+namespace/red created
+root@controlplane:~$ useradd jane
+root@controlplane:~$ id jane     
+uid=1001(jane) gid=1001(jane) groups=1001(jane)
+
+Red:
+----
+root@controlplane:~$ k -n red create role secret-manager --verb=get --resource=secrets
+role.rbac.authorization.k8s.io/secret-manager created
+root@controlplane:~$ k -n red create rolebinding secret-manager --role=secret-manager --user=jane
+rolebinding.rbac.authorization.k8s.io/secret-manager created
+root@controlplane:~$ k get role\,rolebindings.rbac.authorization.k8s.io -n red
+NAME                                            CREATED AT
+role.rbac.authorization.k8s.io/secret-manager   2026-11-14T16:43:30Z
+
+NAME                                                   ROLE                  AGE
+rolebinding.rbac.authorization.k8s.io/secret-manager   Role/secret-manager   17s
+
+Blue:
+-----
+root@controlplane:~$ k -n blue create role secret-manager --verb=get  --verb=list --resource=secrets
+role.rbac.authorization.k8s.io/secret-manager created
+root@controlplane:~$ k -n blue create rolebinding secret-manager --role=secret-manager --user=jane
+rolebinding.rbac.authorization.k8s.io/secret-manager created
+root@controlplane:~$ 
+root@controlplane:~$ k get role\,rolebindings.rbac.authorization.k8s.io -n blue 
+NAME                                            CREATED AT
+role.rbac.authorization.k8s.io/secret-manager   2026-11-14T16:45:04Z
+
+NAME                                                   ROLE                  AGE
+rolebinding.rbac.authorization.k8s.io/secret-manager   Role/secret-manager   50s
+
+Verify:
+-------
+root@controlplane:~$ k -n red auth can-i get secrets --as jane
+yes
+root@controlplane:~$ k -n red auth can-i list secrets --as jane
+no
+root@controlplane:~$ k -n blue auth can-i list secrets --as jane
+yes
+root@controlplane:~$ k -n blue auth can-i get secrets --as jane
+yes
+root@controlplane:~$ k -n blue auth can-i get pods --as jane
+no
+
+#### ClusterRole, ClusterRoleBinding
+root@controlplane:~$ k create clusterrole deploy-deleter --verb delete --resource deployments
+clusterrole.rbac.authorization.k8s.io/deploy-deleter created
+root@controlplane:~$ k create clusterrolebinding deploy-deleter --user jane --clusterrole deploy-deleter
+clusterrolebinding.rbac.authorization.k8s.io/deploy-deleter created
+
+root@controlplane:~$ useradd jim
+root@controlplane:~$ id jim
+uid=1002(jim) gid=1002(jim) groups=1002(jim)
+
+root@controlplane:~$ k -n red create rolebinding deploy-deleter --user jim --clusterrole deploy-deleter
+rolebinding.rbac.authorization.k8s.io/deploy-deleter created
+
+root@controlplane:~$ k auth can-i delete deployments --as jane
+yes
+root@controlplane:~$ k auth can-i delete deployments --as jane -A
+yes
+root@controlplane:~$ k auth can-i delete deployments --as jane -n default
+yes
+root@controlplane:~$ k auth can-i delete deployments --as jim
+no
+root@controlplane:~$ k auth can-i delete deployments --as jim -A
+no
+root@controlplane:~$ k auth can-i delete deployments --as jim -n red
+yes
