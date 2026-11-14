@@ -1,0 +1,80 @@
+Node Metadata
+-------------
+
+Access Metadata with this IP
+http://169.254.169.254/ -- AWS, GCP, Azure
+
+AZURE
+curl -s -H Metadata:true --noproxy "*" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq
+
+root@controlplane:~$ k run fe --image nginx
+pod/fe created
+
+# Work
+root@controlplane:~$ k exec fe -- curl -s -H Metadata:true --noproxy "*" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq
+
+we can observe below:
+- Instance ID and instance details
+- Private IP address
+- Network configuration
+- IAM roles and permissions
+- Temporary cloud credentials (where supported)
+- User data and startup configuration
+
+root@controlplane:~$ vi meta-data.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: block-cloud-metadata
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+
+root@controlplane:~$ k apply -f meta-data.yml 
+networkpolicy.networking.k8s.io/block-cloud-metadata created
+
+# Not Work
+root@controlplane:~$ k exec fe -- curl -s -H Metadata:true --noproxy "*" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq
+
+### Allow Pod to Access Meta-data only for Pod label matches --> access-meta=true
+root@controlplane:~$ vi meta-data-allow.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: block-cloud-metadata
+  namespace: default
+spec:
+  podSelector: 
+    matchLabels:
+      access-meta: "true"
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 169.254.169.254/32
+
+root@controlplane:~$ k apply -f meta-data-allow.yml 
+networkpolicy.networking.k8s.io/block-cloud-metadata created
+
+root@controlplane:~$ k run allow --image nginx
+pod/allow created
+
+root@controlplane:~$ k label po allow "access-meta=true"
+pod/allow labeled
+
+root@controlplane:~$ k get po --show-labels 
+NAME    READY   STATUS    RESTARTS   AGE   LABELS
+allow   1/1     Running   0          31s   access-meta=true,run=allow
+fe      1/1     Running   0          12m   run=fe
+
+## Work
+root@controlplane:~$ k exec allow  -- curl -s -H Metadata:true --noproxy "*" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq
