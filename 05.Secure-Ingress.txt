@@ -1,0 +1,274 @@
+Secure Ingress
+--------------
+curl <IP> -kv
+-k -- skip certificate validation [not disable encryption]
+-v -- show detailed information [DNS, TLS, req,...]
+
+CSR: Certificate Signing Request
+CA: Certificate Authority
+SSL: Secure Sockets Layer
+TLS: Transport Layer Security
+
+### Generate Certificate: [cert.pem, key.pem]
+root@controlplane:~$ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+.
+.
+Common Name (e.g. server FQDN or YOUR name) []:step-into-iot.cloud                    
+Email Address []:
+root@controlplane:~$ ls
+cert.pem  filesystem  key.pem
+
+Steps:
+------
+Purchase SSL/TLS Certificate – Choose an SSL/TLS provider (CA)
+Generate Private Key + CSR – key.pem + request.csr
+Submit CSR to CA – Send request.csr to the provider
+CA Issues Certificate – Receive cert.pem + chain.pem
+Create Kubernetes TLS Secret – Store certificate and private key as tls.crt + tls.key
+Configure Ingress TLS – Reference the Secret using spec.tls[].secretName
+
+root@controlplane:~$ k create secret tls step-into-iot --cert="cert.pem" --key="key.pem"
+secret/step-into-iot created
+
+root@controlplane:~$ k describe secrets step-into-iot 
+Name:         step-into-iot
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Type:  kubernetes.io/tls
+
+Data
+====
+tls.crt:  2021 bytes
+tls.key:  3272 bytes
+
+### Implementation
+root@controlplane:~$ k run fe --image nginx
+pod/fe created
+root@controlplane:~$ k expose pod fe --port 80
+service/fe exposed
+
+root@controlplane:~$ vi ing-tls.yml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tls-step-into-iot
+spec:
+  ingressClassName: nginx #`*****`
+  tls:
+  - hosts:
+      - step-into-iot.cloud
+    secretName: step-into-iot
+  rules:
+  - host: step-into-iot.cloud
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fe
+            port:
+              number: 80
+
+root@controlplane:~$ k apply -f ing-tls.yml 
+ingress.networking.k8s.io/tls-step-into-iot created
+
+##### Add Entry in Local Hostfile to resolve DNS
+### Modify /etc/hosts
+172.30.1.2 step-into-iot.cloud
+
+root@controlplane:~$ k get -n ingress-nginx svc
+NAME                                 TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+ingress-nginx-controller             LoadBalancer   10.101.22.122   <pending>     80:30428/TCP,443:31465/TCP   40m
+ingress-nginx-controller-admission   ClusterIP      10.99.41.154    <none>        443/TCP                      40m
+
+### IP will get FakeCertificate
+root@controlplane:~$ curl -kv https://10.101.22.122:443
+*   Trying 10.101.22.122:443...
+* Connected to 10.101.22.122 (10.101.22.122) port 443
+* ALPN: curl offers h2,http/1.1
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+* TLSv1.3 (IN), TLS handshake, Encrypted Extensions (8):
+* TLSv1.3 (IN), TLS handshake, Certificate (11):
+* TLSv1.3 (IN), TLS handshake, CERT verify (15):
+* TLSv1.3 (IN), TLS handshake, Finished (20):
+* TLSv1.3 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.3 (OUT), TLS handshake, Finished (20):
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 / X25519 / RSASSA-PSS
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+*  start date: Nov 14 10:50:33 2026 GMT
+*  expire date: Nov 14 10:50:33 2027 GMT
+*  issuer: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+*  SSL certificate verify result: self-signed certificate (18), continuing anyway.
+*   Certificate level 0: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+* using HTTP/2
+* [HTTP/2] [1] OPENED stream for https://10.101.22.122:443/
+* [HTTP/2] [1] [:method: GET]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: 10.101.22.122]
+* [HTTP/2] [1] [:path: /]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+> GET / HTTP/2
+> Host: 10.101.22.122
+> User-Agent: curl/8.5.0
+> Accept: */*
+> 
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* old SSL session ID is stale, removing
+< HTTP/2 404 
+< date: Sat, 14 Nov 2026 11:31:47 GMT
+< content-type: text/html
+< content-length: 146
+< strict-transport-security: max-age=31536000; includeSubDomains
+< 
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+* Connection #0 to host 10.101.22.122 left intact
+
+root@controlplane:~$ k get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNTIME
+controlplane   Ready    control-plane   9d    v1.37.1   172.30.1.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+node01         Ready    <none>          8d    v1.37.1   172.30.2.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+
+root@controlplane:~$ curl -kv https://172.30.2.2:31465
+*   Trying 172.30.2.2:31465...
+* Connected to 172.30.2.2 (172.30.2.2) port 31465
+* ALPN: curl offers h2,http/1.1
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+* TLSv1.3 (IN), TLS handshake, Encrypted Extensions (8):
+* TLSv1.3 (IN), TLS handshake, Certificate (11):
+* TLSv1.3 (IN), TLS handshake, CERT verify (15):
+* TLSv1.3 (IN), TLS handshake, Finished (20):
+* TLSv1.3 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.3 (OUT), TLS handshake, Finished (20):
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 / X25519 / RSASSA-PSS
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+*  start date: Nov 14 10:50:33 2026 GMT
+*  expire date: Nov 14 10:50:33 2027 GMT
+*  issuer: O=Acme Co; CN=Kubernetes Ingress Controller Fake Certificate
+*  SSL certificate verify result: self-signed certificate (18), continuing anyway.
+*   Certificate level 0: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+* using HTTP/2
+* [HTTP/2] [1] OPENED stream for https://172.30.2.2:31465/
+* [HTTP/2] [1] [:method: GET]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: 172.30.2.2:31465]
+* [HTTP/2] [1] [:path: /]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+> GET / HTTP/2
+> Host: 172.30.2.2:31465
+> User-Agent: curl/8.5.0
+> Accept: */*
+> 
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* old SSL session ID is stale, removing
+< HTTP/2 404 
+< date: Sat, 14 Nov 2026 11:34:05 GMT
+< content-type: text/html
+< content-length: 146
+< strict-transport-security: max-age=31536000; includeSubDomains
+< 
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+* Connection #0 to host 172.30.2.2 left intact
+
+### Test with DNS
+root@controlplane:~$ curl -kv https://step-into-iot.cloud:31465/
+* Host step-into-iot.cloud:31465 was resolved.
+* IPv6: (none)
+* IPv4: 172.30.1.2
+*   Trying 172.30.1.2:31465...
+* Connected to step-into-iot.cloud (172.30.1.2) port 31465
+* ALPN: curl offers h2,http/1.1
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+* TLSv1.3 (IN), TLS handshake, Encrypted Extensions (8):
+* TLSv1.3 (IN), TLS handshake, Certificate (11):
+* TLSv1.3 (IN), TLS handshake, CERT verify (15):
+* TLSv1.3 (IN), TLS handshake, Finished (20):
+* TLSv1.3 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.3 (OUT), TLS handshake, Finished (20):
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 / X25519 / RSASSA-PSS
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: C=AU; ST=Some-State; O=Internet Widgits Pty Ltd; CN=step-into-iot.cloud
+*  start date: Nov 14 10:52:41 2026 GMT
+*  expire date: Nov 14 10:52:41 2027 GMT
+*  issuer: C=AU; ST=Some-State; O=Internet Widgits Pty Ltd; CN=step-into-iot.cloud
+*  SSL certificate verify result: self-signed certificate (18), continuing anyway.
+*   Certificate level 0: Public key type RSA (4096/152 Bits/secBits), signed using sha256WithRSAEncryption
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* TLSv1.3 (IN), TLS handshake, Newsession Ticket (4):
+* old SSL session ID is stale, removing
+* using HTTP/2
+* [HTTP/2] [1] OPENED stream for https://step-into-iot.cloud:31465/
+* [HTTP/2] [1] [:method: GET]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: step-into-iot.cloud:31465]
+* [HTTP/2] [1] [:path: /]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+> GET / HTTP/2
+> Host: step-into-iot.cloud:31465
+> User-Agent: curl/8.5.0
+> Accept: */*
+> 
+< HTTP/2 200 
+< date: Sat, 14 Nov 2026 11:29:19 GMT
+< content-type: text/html
+< content-length: 896
+< last-modified: Wed, 21 Oct 2026 14:24:51 GMT
+< etag: "6ad8cb33-380"
+< accept-ranges: bytes
+< strict-transport-security: max-age=31536000; includeSubDomains
+< 
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+<style>
+html { color-scheme: light dark; }
+body { width: 35em; margin: 0 auto;
+font-family: Tahoma, Verdana, Arial, sans-serif; }
+</style>
+</head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, nginx is successfully installed and working.
+Further configuration is required for the web server, reverse proxy, 
+API gateway, load balancer, content cache, or other features.</p>
+
+<p>For online documentation and support please refer to
+<a href="https://nginx.org/">nginx.org</a>.<br/>
+To engage with the community please visit
+<a href="https://community.nginx.org/">community.nginx.org</a>.<br/>
+For enterprise grade support, professional services, additional 
+security features and capabilities please refer to
+<a href="https://f5.com/nginx">f5.com/nginx</a>.</p>
+
+<p><em>Thank you for using nginx.</em></p>
+</body>
+</html>
+* Connection #0 to host step-into-iot.cloud left intact
