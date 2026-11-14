@@ -1,0 +1,95 @@
+Secure Ingress: L7 - Routing:[path & domain]
+--------------------------------------------
+In real-world Kubernetes deployments, we commonly expose an Ingress Controller through a LoadBalancer Service.
+
+root@controlplane:~$ helm upgrade --install ingress-nginx ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --namespace ingress-nginx --create-namespace
+
+root@controlplane:~$ k get svc -n ingress-nginx 
+NAME                                 TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+ingress-nginx-controller             LoadBalancer   10.105.122.116   <pending>     80:31724/TCP,443:31156/TCP   2m34s
+ingress-nginx-controller-admission   ClusterIP      10.104.67.27     <none>        443/TCP                      2m34s
+
+root@controlplane:~$ k run fe --image nginx
+pod/fe created
+root@controlplane:~$ k expose po fe --port 80
+service/fe exposed
+
+root@controlplane:~$ k get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNTIME
+controlplane   Ready    control-plane   8d    v1.37.1   172.30.1.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+node01         Ready    <none>          8d    v1.37.1   172.30.2.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+
+root@controlplane:~$ curl 172.30.1.2:31724
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+
+root@controlplane:~$ curl 172.30.2.2:31724
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+
+### Setup Ingress
+root@controlplane:~$ k run fe --image nginx
+pod/fe created
+root@controlplane:~$ k expose po fe --port 80
+service/fe exposed
+
+root@controlplane:~$ vi ing.yml 
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minimal-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /  # We need this annotation because your backend NGINX serves the application at /, but the user accesses it through /fe.
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /fe
+        pathType: Prefix
+        backend:
+          service:
+            name: fe
+            port:
+              number: 80
+
+root@controlplane:~$ k apply -f ing.yml 
+ingress.networking.k8s.io/minimal-ingress created
+
+root@controlplane:~$ k get ingress
+NAME              CLASS   HOSTS   ADDRESS   PORTS   AGE
+minimal-ingress   nginx   *                 80      5m10s
+
+root@controlplane:~$ k describe ingress minimal-ingress 
+Name:             minimal-ingress
+Labels:           <none>
+Namespace:        default
+Address:          
+Ingress Class:    nginx
+Default backend:  <default>
+Rules:
+  Host        Path  Backends
+  ----        ----  --------
+  *           
+              /fe   fe:80 (192.168.1.51:80)
+Annotations:  <none>
+Events:
+  Type    Reason  Age                  From                      Message
+  ----    ------  ----                 ----                      -------
+  Normal  Sync    10s (x2 over 5m16s)  nginx-ingress-controller  Scheduled for sync
+
+## Works
+root@controlplane:~$ curl 172.30.1.2:31724/fe
+root@controlplane:~$ curl 172.30.2.2:31724/fe
