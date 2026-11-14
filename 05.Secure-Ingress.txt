@@ -76,7 +76,7 @@ root@controlplane:~$ k apply -f ing-tls.yml
 ingress.networking.k8s.io/tls-step-into-iot created
 
 ##### Add Entry in Local Hostfile to resolve DNS
-### Modify /etc/hosts
+### Modify /etc/hosts with WorkerNodeIP
 172.30.1.2 step-into-iot.cloud
 
 root@controlplane:~$ k get -n ingress-nginx svc
