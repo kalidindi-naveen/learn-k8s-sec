@@ -1,0 +1,170 @@
+One of the nginx based pod called cyan-pod-cka28-trb is running under cyan-ns-cka28-trb namespace and it is exposed within the cluster using cyan-svc-cka28-trb service.
+This is a restricted pod so a network policy called cyan-np-cka28-trb has been created in the same namespace to apply some restrictions on this pod.
+Two other pods called cyan-white-cka28-trb1 and cyan-black-cka28-trb are also running in the default namespace.
+The nginx based app running on the cyan-pod-cka28-trb pod is exposed internally on the default nginx port (80).
+Expectation: This app should only be accessible from the cyan-white-cka28-trb1 pod.
+Problem: This app is not accessible from anywhere.
+Troubleshoot this issue and fix the connectivity as per the requirement listed above.
+Note: You can exec into cyan-white-cka28-trb and cyan-black-cka28-trb pods and test connectivity using the curl utility.
+You may update the network policy, but make sure it is not deleted from the cyan-ns-cka28-trb namespace.
+
+NP:
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyan-np-cka28-trb
+  namespace: cyan-ns-cka28-trb
+spec:
+  egress:
+  - ports:
+    - port: 80
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
+      podSelector:
+        matchLabels:
+          # Add the required pod label here
+  policyTypes:
+  - Ingress
+  - Egress
+
+### Analysis
+NS:
+cyan-ns-cka28-trb
+POD:
+cyan-pod-cka28-trb
+SVC:
+cyan-svc-cka28-trb
+
+NS:
+default
+POD:
+cyan-white-cka28-trb1
+cyan-black-cka28-trb
+SVC:
+cyan-pod-cka28-trb
+
+QQ:
+cyan-pod-cka28-trb access from cyan-white-cka28-trb1
+Login to cyan-white-cka28-trb1, i need to curl cyan-pod-cka28-trb
+
+### Solution:
+root@controlplane:~$ k get po --show-labels 
+NAME                    READY   STATUS    RESTARTS   AGE   LABELS
+cyan-black-cka28-trb    1/1     Running   0          95s   app=cyan-black
+cyan-white-cka28-trb1   1/1     Running   0          95s   app=cyan-white
+root@controlplane:~$ k get netpol
+No resources found in default namespace.
+
+root@controlplane:~$ k get netpol -n cyan-ns-cka28-trb
+NAME                POD-SELECTOR     AGE
+cyan-np-cka28-trb   app=cyan-nginx   4m56s
+root@controlplane:~$ k get pod -n cyan-ns-cka28-trb --show-labels 
+NAME                 READY   STATUS    RESTARTS   AGE     LABELS
+cyan-pod-cka28-trb   1/1     Running   0          2m54s   app=cyan-nginx
+
+root@controlplane:~$ kubectl get svc -n cyan-ns-cka28-trb
+NAME                 TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+cyan-svc-cka28-trb   ClusterIP   10.107.66.31   <none>        80/TCP    8m46s
+
+root@controlplane:~$ kubectl get endpoints cyan-svc-cka28-trb -n cyan-ns-cka28-trb
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                 ENDPOINTS          AGE
+cyan-svc-cka28-trb   192.168.1.108:80   9m33s
+
+## Not Work -- because np tighted in cyan-ns-cka28-trb
+root@controlplane:~$ kubectl exec cyan-white-cka28-trb1 -- curl http://cyan-svc-cka28-trb.cyan-ns-cka28-trb.svc.cluster.local
+
+## vi np.yml
+add this label: app: cyan-white
+
+## Works
+root@controlplane:~$ kubectl exec cyan-white-cka28-trb1 -- curl http://cyan-svc-cka28-trb.cyan-ns-cka28-trb.svc.cluster.local
+## Expected -- Not work
+root@controlplane:~$ kubectl exec cyan-black-cka28-trb --   curl http://cyan-svc-cka28-trb.cyan-ns-cka28-trb.svc.cluster.local
+
+##### Setup Script:
+#!/bin/bash
+
+# Create namespace
+kubectl create namespace cyan-ns-cka28-trb --dry-run=client -o yaml | kubectl apply -f -
+
+# Create nginx application pod
+kubectl run cyan-pod-cka28-trb \
+  -n cyan-ns-cka28-trb \
+  --image=nginx \
+  --labels="app=cyan-nginx" \
+  --port=80
+
+# Create service
+kubectl expose pod cyan-pod-cka28-trb \
+  -n cyan-ns-cka28-trb \
+  --name=cyan-svc-cka28-trb \
+  --port=80 \
+  --target-port=80
+
+# Create white client pod
+kubectl run cyan-white-cka28-trb1 \
+  --image=curlimages/curl \
+  --labels="app=cyan-white" \
+  --command -- sleep 36000
+
+# Create black client pod
+kubectl run cyan-black-cka28-trb \
+  --image=curlimages/curl \
+  --labels="app=cyan-black" \
+  --command -- sleep 36000
+
+# Wait for pods
+kubectl wait --for=condition=Ready pod/cyan-pod-cka28-trb \
+  -n cyan-ns-cka28-trb --timeout=120s
+
+kubectl wait --for=condition=Ready pod/cyan-white-cka28-trb1 \
+  --timeout=120s
+
+kubectl wait --for=condition=Ready pod/cyan-black-cka28-trb \
+  --timeout=120s
+
+# Create intentionally broken NetworkPolicy
+cat <<'EOF' > np.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyan-np-cka28-trb
+  namespace: cyan-ns-cka28-trb
+spec:
+  podSelector:
+    matchLabels:
+      app: cyan-nginx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
+      podSelector:
+        matchLabels:
+          app: cyan-white-wrong
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 80
+EOF
+
+kubectl apply -f np.yml
+
+echo "Setup completed!"
