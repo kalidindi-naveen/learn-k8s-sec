@@ -1,0 +1,91 @@
+SA [service account] -- NS level
+
+root@controlplane:~$ k create sa k8s
+serviceaccount/k8s created
+root@controlplane:~$ k get sa
+NAME      AGE
+default   10d
+k8s       5s
+root@controlplane:~$ k create token k8s
+##copy the token and paste it in this site
+https://jwt.io/
+####you will get cluster information plus the name of the service account plus it apply to which namespace
+## SA will mount token as volume, any one can copy token and access API Server, perform malicious action -- [Restrict via RBAC to k8s SA] [so they will have limmited access]
+root@controlplane:~$ vi pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: accessor
+  name: accessor
+spec:
+  serviceAccountName: k8s 
+  containers:
+  - image: nginx
+    name: accessor
+
+root@controlplane:~$ k apply -f pod.yml 
+pod/accessor created
+root@controlplane:~$ k exec -it accessor -- sh
+# pwd
+/
+# mount | grep service
+tmpfs on /run/secrets/kubernetes.io/serviceaccount type tmpfs (ro,relatime,size=1846508k,inode64,noswap)
+# cd /run/secrets/kubernetes.io/serviceaccount
+# pwd
+/run/secrets/kubernetes.io/serviceaccount
+# ls
+ca.crt  namespace  token
+# cat token
+# env | grep KUBE
+KUBERNETES_SERVICE_PORT=443
+KUBERNETES_PORT=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBERNETES_PORT_443_TCP_PORT=443
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+KUBERNETES_SERVICE_HOST=10.96.0.1
+
+##through a curl request we can get the service account information from inside the pod 
+# curl https://10.96.0.1 -k -H "Authorization: Bearer $(cat token)"
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:serviceaccount:default:k8s\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}# 
+
+#### why 10.96.0.1 ???
+root@controlplane:~$ k get svc   
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   10d
+
+Why disable automount? [/var/run/secrets/kubernetes.io/serviceaccount/token]
+if its ServiceAccount token is mounted, a compromised application might use that token to attempt API access.
+Suppose you deploy an NGINX application -- Does NGINX need to communicate with the Kubernetes API server? -- Usually, no.
+
+EX:
+---
+root@controlplane:~$ vi nginx.yml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  automountServiceAccountToken: false
+  serviceAccountName: k8s
+  containers:
+  - name: nginx
+    image: nginx
+root@controlplane:~$ k apply -f nginx.yml 
+pod/nginx created
+root@controlplane:~$ k exec -it nginx -- bash
+root@nginx:/# pwd
+/
+root@nginx:/# mount | grep service
+root@nginx:/# 
