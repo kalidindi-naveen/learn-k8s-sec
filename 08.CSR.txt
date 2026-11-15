@@ -1,0 +1,132 @@
+CSR
+---
+Certificate Request Token
+https://kubernetes.io/docs/tasks/tls/certificate-issue-client-csr/
+
+Hands-on:
+---------
+1. create cert+key and authenticate as user naveen
+2. will create csr
+3. will sign csr using k8s api [importing csr]
+4. using cert+key will connect to k8s api as user jane
+
+Steps:
+------
+Generate TLS Certificate [we are using openssl]
+root@controlplane:~$ openssl genrsa -out myuser.key 3072
+root@controlplane:~$ ls
+filesystem  myuser.key
+
+root@controlplane:~$ openssl req -new -key myuser.key -out myuser.csr -subj "/CN=myuser"
+root@controlplane:~$ ls
+filesystem  myuser.csr  myuser.key
+
+root@controlplane:~$ cat myuser.csr | base64 -w 0
+
+root@controlplane:~$ cat <<EOF | kubectl apply -f -
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: myuser
+spec:
+  request: <base64-encoded-csr>
+  signerName: kubernetes.io/kube-apiserver-client
+  expirationSeconds: 86400  # one day
+  usages:
+  - client auth
+EOF
+certificatesigningrequest.certificates.k8s.io/myuser created
+
+root@controlplane:~$ kubectl get csr | grep myuser
+myuser      39s   kubernetes.io/kube-apiserver-client           kubernetes-admin           24h                 Pending
+
+root@controlplane:~$ kubectl certificate approve myuser
+certificatesigningrequest.certificates.k8s.io/myuser approved
+
+root@controlplane:~$ kubectl get csr myuser -o jsonpath='{.status.certificate}'| base64 -d > myuser.crt
+root@controlplane:~$ ls
+filesystem  myuser.crt  myuser.csr  myuser.key
+
+root@controlplane:~$ k config view
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://172.30.1.2:6443
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    user: kubernetes-admin
+  name: kubernetes-admin@kubernetes
+current-context: kubernetes-admin@kubernetes
+kind: Config
+users:
+- name: kubernetes-admin
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+
+### Add myuser to kubeconfig
+root@controlplane:~$ kubectl config set-credentials myuser --client-key=myuser.key --client-certificate=myuser.crt --embed-certs=true
+User "myuser" set.
+
+root@controlplane:~$ kubectl config set-context myuser --cluster=kubernetes --user=myuser
+Context "myuser" created.
+
+root@controlplane:~$ kubectl --context myuser auth whoami
+ATTRIBUTE                                           VALUE
+Username                                            myuser
+Groups                                              [system:authenticated]
+Extra: authentication.kubernetes.io/credential-id   [X509SHA256=dbb640ad737676cb3504268d21a877438c1f5da93f942d13e92a7384618bde06]
+
+root@controlplane:~$ k config get-contexts
+CURRENT   NAME                          CLUSTER      AUTHINFO           NAMESPACE
+*         kubernetes-admin@kubernetes   kubernetes   kubernetes-admin   
+          myuser                        kubernetes   myuser
+
+root@controlplane:~$ k config use-context myuser
+Switched to context "myuser".
+
+root@controlplane:~$ k config get-contexts
+CURRENT   NAME                          CLUSTER      AUTHINFO           NAMESPACE
+          kubernetes-admin@kubernetes   kubernetes   kubernetes-admin   
+*         myuser                        kubernetes   myuser 
+
+root@controlplane:~$ k get pods
+Error from server (Forbidden): pods is forbidden: User "myuser" cannot list resource "pods" in API group "" in the namespace "default"
+root@controlplane:~$ k get deployments
+Error from server (Forbidden): deployments.apps is forbidden: User "myuser" cannot list resource "deployments" in API group "apps" in the namespace "default"
+
+root@controlplane:~$ k config use-context kubernetes-admin@kubernetes
+Switched to context "kubernetes-admin@kubernetes".
+
+root@controlplane:~$ k get po
+No resources found in default namespace.
+root@controlplane:~$ k create deployment fe --image nginx
+deployment.apps/fe created
+
+root@controlplane:~$ kubectl create clusterrole deploy-deleter --verb list --verb get --verb delete --resource deployments
+clusterrole.rbac.authorization.k8s.io/deploy-deleter created
+
+root@controlplane:~$ k get clusterrole | grep dep
+deploy-deleter                                                          2026-11-15T14:39:21Z
+
+root@controlplane:~$ kubectl create clusterrolebinding deploy-deleter --user myuser --clusterrole deploy-deleter
+clusterrolebinding.rbac.authorization.k8s.io/deploy-deleter created
+
+root@controlplane:~$ k get clusterrolebindings.rbac.authorization.k8s.io | grep dep
+deploy-deleter                                                          ClusterRole/deploy-deleter                                                          16s
+
+root@controlplane:~$ k config use-context myuser 
+Switched to context "myuser".
+
+root@controlplane:~$ k get po
+Error from server (Forbidden): pods is forbidden: User "myuser" cannot list resource "pods" in API group "" in the namespace "default"
+
+root@controlplane:~$ k get deployments.apps 
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+fe     1/1     1            1           3m37s
+
+root@controlplane:~$ k delete deployments.apps fe 
+deployment.apps "fe" deleted from default namespace
