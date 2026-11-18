@@ -1,0 +1,160 @@
+All API Requests tied to 
+  1. normal user
+  2. service account
+  3. anonymous request
+
+Network restriction: Firewall / Security Groups / Private Endpoint.
+Disable insecure HTTP: --insecure-port=0.
+Disable anonymous access: --anonymous-auth=false.
+Enable authorization: --authorization-mode=Node,RBAC.
+Least privilege: RBAC.
+Secure authentication: Certificates / OIDC.
+Audit API requests: Audit logging.
+Never expose API Server unnecessarily: Restrict port 6443.
+
+Restriction?
+  1. Don't allow anonymous access
+  2. Close all insecure ports
+  3. Never Expose API Server to outside
+  4. Restrict API Server access to node machine
+
+Static pods??
+-------------
+A Static Pod is managed directly by the kubelet on a specific node, using a YAML manifest stored on that node.
+- No Deployment or ReplicaSet required.
+- Kubelet creates and monitors it.
+- Typically used for control-plane components.
+
+root@controlplane:~$ cd /etc/kubernetes/manifests/
+root@controlplane:/etc/kubernetes/manifests$ ls
+etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yaml
+
+Ex: No Deployment, ReplicaSet, or scheduler is required to manage the Static Pod.
+1. You create a Pod YAML file on a node (usually in /etc/kubernetes/manifests/).
+2. The kubelet monitors this directory.
+3. The kubelet reads the manifest and creates the Pod.
+4. The Pod runs on that node.
+5. If the Pod crashes, kubelet attempts to recreate it.
+6. If you remove the manifest file, kubelet terminates the Pod.
+
+Handson:
+--------
+root@controlplane:/etc/kubernetes/manifests$ curl https://localhost:6443 -k
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}
+
+root@controlplane:/etc/kubernetes/manifests$ curl https://localhost:6443/api/v1/pods -k 
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "pods is forbidden: User \"system:anonymous\" cannot list resource \"pods\" in API group \"\" at the cluster scope",
+  "reason": "Forbidden",
+  "details": {
+    "kind": "pods"
+  },
+  "code": 403
+}
+
+Scenario-1:
+-----------
+##open the kubeapi server
+root@controlplane:/etc/kubernetes/manifests$ vi kube-apiserver.yaml 
+####below specification container add the any line 
+
+spec:
+  containers:
+  - command:
+
+    - kube-apiserver
+    - --anonymous-auth=false ###add this line
+
+##After this k8s will panic you need to wait for few minutes before the pod comes up
+### Expected behaviour
+root@controlplane:/etc/kubernetes/manifests$ k get po -n kube-system | grep kube-api
+The connection to the server 172.30.1.2:6443 was refused - did you specify the right host or port?
+root@controlplane:/etc/kubernetes/manifests$ k get po -n kube-system | grep kube-api
+kube-apiserver-controlplane            0/1     Running   0             54s
+
+### Pod being restarted because of Startup probe failed
+#### probe is hitting an API endpoint without authentication. When anonymous authentication is disabled, 
+#### the API server rejects unauthenticated requests with 401 Unauthorized.
+root@controlplane:/etc/kubernetes/manifests$ k get po -n kube-system | grep kube-api
+kube-apiserver-controlplane            0/1     Running   2 (2m59s ago)    12m
+
+root@controlplane:/etc/kubernetes/manifests$ curl https://localhost:6443 -k
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "Unauthorized",
+  "reason": "Unauthorized",
+  "code": 401
+}
+
+Scenario-2:
+-----------
+The insecure serving port was deprecated and removed in Kubernetes 1.20.
+
+In modern Kubernetes versions
+- --insecure-port is no longer supported.
+- You don't need to add --insecure-port=0 for disable the insecure port.
+- API server communication uses the secure HTTPS endpoint, typically port 6443.
+
+Scenario-3:
+-----------
+root@controlplane:/etc/kubernetes/manifests$ k get svc
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   12d
+root@controlplane:/etc/kubernetes/manifests$ k edit svc kubernetes 
+service/kubernetes edited
+root@controlplane:/etc/kubernetes/manifests$ k get svc
+NAME         TYPE       CLUSTER-IP   EXTERNAL-IP   PORT(S)         AGE
+kubernetes   NodePort   10.96.0.1    <none>        443:30273/TCP   12d
+root@controlplane:/etc/kubernetes/manifests$ k get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNTIME
+controlplane   Ready    control-plane   12d   v1.37.1   172.30.1.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+node01         Ready    <none>          12d   v1.37.1   172.30.2.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+
+root@controlplane:/etc/kubernetes/manifests$ curl https://172.30.2.2:30273 -k
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}root@controlplane:/etc/kubernetes/manifests$ curl https://172.30.1.2:30273 -k
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}root@controlplane:/etc/kubernetes/manifests$ curl https://172.30.1.2:6443 -k
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}
+
