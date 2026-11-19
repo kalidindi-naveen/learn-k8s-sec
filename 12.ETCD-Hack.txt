@@ -1,0 +1,42 @@
+ETCD
+----
+root@controlplane:~$ ETCDCTL_API=3 etcdctl endpoint health
+{"level":"warn","ts":"2026-11-19T04:53:51.815573Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+{"level":"warn","ts":"2026-11-19T04:53:56.820901Z","logger":"client","caller":"v3/retry_interceptor.go:68","msg":"retrying of unary invoker failed","target":"etcd-endpoints://0x2c84835d6e00/127.0.0.1:2379","peer":"Peer{Addr: <nil>, LocalAddr: <nil>, AuthInfo: <nil>}","method":"/etcdserverpb.KV/Range","attempt":0,"error":"rpc error: code = DeadlineExceeded desc = latest balancer error: connection error: desc = \"error reading server preface: EOF\""}
+127.0.0.1:2379 is unhealthy: failed to commit proposal: context deadline exceeded
+Error: unhealthy cluster
+
+### To communicate to API server we need ca cert, client cert, client key
+root@controlplane:~$ cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep etcd
+    - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+    - --etcd-servers=https://127.0.0.1:2379
+root@controlplane:~$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt endpoint health
+{"level":"warn","ts":"2026-11-19T04:54:32.757360Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+127.0.0.1:2379 is healthy: successfully committed proposal: took = 13.769699ms
+root@controlplane:~$ 
+root@controlplane:~$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret2
+{"level":"warn","ts":"2026-11-19T04:54:51.717543Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+/registry/secrets/default/secret2
+k8s
+
+
+v1Secret
+
+secret2default"*$1b24ca79-52a4-4ff9-aa36-4d08af9b51e72eB
+kubectl-createUpdatevFieldsV1:1
+/{"f:data":{".":{},"f:password":{}},"f:type":{}}B
+passwor12345678Opaque"
+root@controlplane:~$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret1
+{"level":"warn","ts":"2026-11-19T04:55:13.471940Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+/registry/secrets/default/secret1
+k8s
+
+
+v1Secret
+
+secret1default"*$29a5e308-7dbc-4c25-91e3-e10cb7078ad22aB
+kubectl-createUpdatevFieldsV1:-
++{"f:data":{".":{},"f:user":{}},"f:type":{}}B
+useradminOpaque"
