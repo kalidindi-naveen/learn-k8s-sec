@@ -40,3 +40,144 @@ secret1default"*$29a5e308-7dbc-4c25-91e3-e10cb7078ad22aB
 kubectl-createUpdatevFieldsV1:-
 +{"f:data":{".":{},"f:user":{}},"f:type":{}}B
 useradminOpaque"
+
+##### Encrypt Secrets@REST
+root@controlplane:~$ cd /etc/kubernetes   
+root@controlplane:/etc/kubernetes$ ls
+admin.conf  controller-manager.conf  kubelet.conf  manifests  pki  scheduler.conf  super-admin.conf
+root@controlplane:/etc/kubernetes$ mkdir etcd
+root@controlplane:/etc/kubernetes$ cd etcd/
+root@controlplane:/etc/kubernetes/etcd$ vi ec.yml
+root@controlplane:/etc/kubernetes/etcd$ cat ec.yml 
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: c2VjcmV0IGlzIHNlY3VyZQ==
+      - identity: {} #so that my existing secret will not be encrypted
+root@controlplane:/etc/kubernetes/etcd$ pwd
+/etc/kubernetes/etcd
+root@controlplane:/etc/kubernetes/etcd$ vi /etc/kubernetes/manifests/kube-apiserver.yaml
+.
+.
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --encryption-provider-config=/etc/kubernetes/etcd/ec.yml ## Add this
+.
+.
+- hostPath:
+      path: /etc/kubernetes/pki
+      type: DirectoryOrCreate
+    name: k8s-certs
+###copy the above mentioend block paste in the c
+  - hostPath:
+      path: /etc/kubernetes/etcd
+      type: DirectoryOrCreate
+    name: etcd
+.
+.
+  - mountPath: /etc/kubernetes/pki
+      name: k8s-certs
+      readOnly: true
+##copy the above and paste it below
+    - mountPath: /etc/kubernetes/etcd
+      name: etcd
+      readOnly: true
+root@controlplane:/etc/kubernetes/etcd$ k get po -n kube-system | grep kube-api
+The connection to the server 172.30.1.2:6443 was refused - did you specify the right host or port?
+root@controlplane:/etc/kubernetes/etcd$ k get po -n kube-system | grep kube-api
+kube-apiserver-controlplane            1/1     Running   0             9s
+
+root@controlplane:/etc/kubernetes/etcd$ crictl ps | grep api
+929cd855a868f       82ae6c548117f       About a minute ago   Running             kube-apiserver            0                   22df7e1cd4a2e       kube-apiserver-controlplane               kube-system
+
+root@controlplane:/etc/kubernetes/etcd$ cd /var/log/pods/
+
+root@controlplane:/var/log/pods$ ls
+kube-system_cilium-c9f5c_34769a05-6b46-4471-87e2-4bc51d3c4949
+kube-system_cilium-envoy-8qps9_4948fa7c-920f-4009-9323-2f1c048d1c72
+kube-system_cilium-operator-95cb869cd-tkqmp_58339505-2af6-48e1-a313-6dba94137101
+kube-system_coredns-854c976c6-944n6_9d9a86eb-0fb4-4ba7-8cf8-534cac92749c
+kube-system_coredns-854c976c6-wq5m8_34d253f2-1f6b-4f84-ae75-d3aa5e436ec3
+kube-system_etcd-controlplane_61fb1a9ec35515ccfe4204461667320c
+kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64
+kube-system_kube-controller-manager-controlplane_82efb44bfa87516a2586bcea60137c49
+kube-system_kube-scheduler-controlplane_29692222f3a410f3a8ab44c1e3ad3513
+local-path-storage_local-path-provisioner-5dc7cd49fd-6pqgc_81706286-e112-44f2-96f0-72368698c69a
+
+root@controlplane:/var/log/pods$ cd kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64/
+
+root@controlplane:/var/log/pods/kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64$ ls
+kube-apiserver
+root@controlplane:/var/log/pods/kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64$ cd kube-apiserver/
+
+root@controlplane:/var/log/pods/kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64/kube-apiserver$ ls
+0.log
+
+root@controlplane:/var/log/pods/kube-system_kube-apiserver-controlplane_85bfefe31b1324b3fc83176a58460c64/kube-apiserver$ tail -f 0.log
+2026-11-20T02:51:18.824254499Z stderr F I1120 02:51:18.823382       1 handler.go:309] Adding GroupVersion cilium.io v2alpha1 to ResourceManager
+2026-11-20T02:51:18.824281831Z stderr F I1120 02:51:18.823863       1 aggregator.go:187] initial CRD sync complete...
+2026-11-20T02:51:18.82428365Z stderr F I1120 02:51:18.823869       1 autoregister_controller.go:144] Starting autoregister controller
+2026-11-20T02:51:18.82428474Z stderr F I1120 02:51:18.823873       1 cache.go:32] Waiting for caches to sync for autoregister controller
+2026-11-20T02:51:18.824285784Z stderr F I1120 02:51:18.823877       1 cache.go:39] Caches are synced for autoregister controller
+2026-11-20T02:51:19.729448798Z stderr F I1120 02:51:19.729378       1 storage_scheduling.go:205] all system priority classes are created successfully or already exist.
+2026-11-20T02:51:20.082494715Z stderr F W1120 02:51:20.082329       1 lease.go:270] Resetting endpoints for master service "kubernetes" to [172.30.1.2]
+2026-11-20T02:51:20.083805044Z stderr F I1120 02:51:20.083703       1 controller.go:667] quota admission added evaluator for: endpoints
+2026-11-20T02:51:20.091089523Z stderr F I1120 02:51:20.090987       1 controller.go:667] quota admission added evaluator for: endpointslices.discovery.k8s.io
+2026-11-20T02:51:39.552745505Z stderr F I1120 02:51:39.552114       1 controller.go:667] quota admission added evaluator for: serviceaccounts
+
+### Restart k8s server
+root@controlplane:/etc/kubernetes$ mv ./manifests/kube-apiserver.yaml .
+root@controlplane:/etc/kubernetes$ k get po -n kube-system | grep kube-api
+The connection to the server 172.30.1.2:6443 was refused - did you specify the right host or port?
+root@controlplane:/etc/kubernetes$ k get po -n kube-system | grep kube-api
+The connection to the server 172.30.1.2:6443 was refused - did you specify the right host or port?
+root@controlplane:/etc/kubernetes$ mv kube-apiserver.yaml ./manifests/
+root@controlplane:/etc/kubernetes$ k get po -n kube-system | grep kube-api
+kube-apiserver-controlplane            1/1     Running   0             8m54s
+
+### Lets Create secret and see
+root@controlplane:/etc/kubernetes$ kubectl create secret generic secret1 --from-literal user=admin
+secret/secret1 created
+root@controlplane:/etc/kubernetes$ kubectl create secret generic secret2 --from-literal password=12345678
+secret/secret2 created
+root@controlplane:/etc/kubernetes$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret2
+{"level":"warn","ts":"2026-11-20T03:02:26.419608Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+/registry/secrets/default/secret2
+k8s:enc:aescbc:v1:key1:70#Wgha78hu|80dN
+                                       ]WnP/&qS1gъ=J4-Ԡ+
+4bR<}^OZE8I` \YCkB"!~fM_We:NmKm+1˂7CY`ݏO:V8iɐWy+        iiGv&T)KטJDej&Qp?Emt:~
+root@controlplane:/etc/kubernetes$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret1
+{"level":"warn","ts":"2026-11-20T03:02:33.167571Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+/registry/secrets/default/secret1
+k8s:enc:aescbc:v1:key1:ڒ/0D$&̡.P'[       NU.=(dv];^c
+)IlmAdZnT5
+u+@M
+dW`mÝ[-|=9; Bv.SԌZwDL)wSptm8j}֠ո]%-$
+
+### New Secrets got encrypted, old one was not encrypted because we use [identity: {}]
+root@controlplane:/etc/kubernetes$ ETCDCTL_API=3 etcdctl --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/kube-system/bootstrap-token-e11m8w
+{"level":"warn","ts":"2026-11-20T03:04:11.235334Z","caller":"flags/flag.go:94","msg":"unrecognized environment variable","environment-variable":"ETCDCTL_API=3"}
+/registry/secrets/kube-system/bootstrap-token-e11m8w
+k8s
+
+
+v1Secret
+
+bootstrap-token-e11m8w
+                      kube-system"*$7af53f8c-9bf6-4bab-9e22-5adf56f8d2b22ױB
+kubeadmUpdatevױFieldsV1:
+{"f:data":{".":{},"f:auth-extra-groups":{},"f:token-id":{},"f:token-secret":{},"f:usage-bootstrap-authentication":{},"f:usage-bootstrap-signing":{}},"f:type":{}}BD
+auth-extra-groups/system:bootstrappers:kubeadm:default-node-token
+token-ide11m8w 
+
+token-secretnmjgx0mguv3b6jao&
+usage-bootstrap-authenticationtrue
+usage-bootstrap-signingtruebootstrap.kubernetes.io/token"
