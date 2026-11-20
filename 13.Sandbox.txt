@@ -1,0 +1,26 @@
+CRI -- Container Runtime Interface
+----------------------------------
+
+Kubernetes + containerd: kubelet → CRI → containerd → containerd-shim → runc → Linux kernel → Create Container
+Kubernetes + CRI-O: kubelet → CRI → CRI-O → runc/crun → Linux kernel → Create Container
+Docker: Docker CLI → dockerd → containerd → containerd-shim → runc → Linux kernel → Create Container
+Podman: Podman CLI → libpod → runc/crun → Linux kernel → Create Container
+
+Kata Containers and gVisor provide additional isolation between container workloads and the host.
+Three important technologies:
+- runc – Standard OCI runtime.
+- Kata Containers – Hardware virtualization-based isolation.
+- gVisor – User-space application kernel-based isolation.
+
+
+
+root@controlplane:~$ kubectl run pod --image=nginx
+pod/pod created
+root@controlplane:~$ k exec pod -- uname -r
+6.8.0-147-generic
+root@controlplane:~$ uname -r
+6.8.0-147-generic
+
+### strace shows system calls made by a process to the Linux kernel
+root@controlplane:~$ strace uname -r
+
