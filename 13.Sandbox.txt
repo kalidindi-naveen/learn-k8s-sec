@@ -1,5 +1,6 @@
 CRI -- Container Runtime Interface
 ----------------------------------
+Note: gvisor will slow Node Performance, make sure you install gvisor only required node.
 
 Kubernetes + containerd: kubelet → CRI → containerd → containerd-shim → runc → Linux kernel → Create Container
 Kubernetes + CRI-O: kubelet → CRI → CRI-O → runc/crun → Linux kernel → Create Container
@@ -11,8 +12,7 @@ Three important technologies:
 - runc – Standard OCI runtime.
 - Kata Containers – Hardware virtualization-based isolation.
 - gVisor – User-space application kernel-based isolation.
-
-
+         - user-space kernal for contianers
 
 root@controlplane:~$ kubectl run pod --image=nginx
 pod/pod created
@@ -24,3 +24,83 @@ root@controlplane:~$ uname -r
 ### strace shows system calls made by a process to the Linux kernel
 root@controlplane:~$ strace uname -r
 
+root@controlplane:~$ vi run.yml
+root@controlplane:~$ cat run.yml 
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor 
+handler: runsc
+root@controlplane:~$ k apply -f run.yml 
+runtimeclass.node.k8s.io/gvisor created
+root@controlplane:~$ k get runtimeclasses.node.k8s.io 
+NAME     HANDLER   AGE
+gvisor   runsc     4s
+
+root@controlplane:~$ k run gvisor --image=nginx -o yaml --dry-run=client > gvisor.yml
+root@controlplane:~$ vi gvisor.yml 
+root@controlplane:~$ cat gvisor.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: gvisor
+  name: gvisor
+spec:
+  runtimeClassName: gvisor
+  containers:
+  - image: nginx
+    name: gvisor
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+root@controlplane:~$ k apply -f gvisor.yml 
+pod/gvisor created
+### Pod will not created because runtime was not avalible
+root@controlplane:~$ k get po
+NAME     READY   STATUS              RESTARTS   AGE
+gvisor   0/1     ContainerCreating   0          2s
+root@controlplane:~$ k describe po gvisor | grep error
+  Warning  FailedCreatePodSandBox  21s   kubelet            Failed to create pod sandbox: rpc error: code = Unknown desc = unable to get OCI runtime for sandbox "ee354c474e3019e15682f79252cae3afc71c955d479b3def5094ea8524d50e2d": no runtime for "runsc" is configured
+
+#### Install runsc
+###do this installation in the node where you want gvisor as a sanbox
+root@controlplane:~$ k get po -o wide
+NAME     READY   STATUS              RESTARTS   AGE     IP       NODE     NOMINATED NODE   READINESS GATES
+gvisor   0/1     ContainerCreating   0          5m57s   <none>   node01   <none>           <none>
+root@controlplane:~$ ssh node01 
+Last login: Wed Jun 17 06:26:38 2026 from 10.244.0.152
+root@node01:~$ bash <(curl -s https://raw.githubusercontent.com/killer-sh/cks-course-environment/master/course-content/microservice-vulnerabilities/container-runtimes/gvisor/install_gvisor.sh)
+root@controlplane:~$ k get po
+NAME     READY   STATUS    RESTARTS   AGE
+gvisor   1/1     Running   0          15m
+
+#### we can clearly see the kernel version difference
+root@controlplane:~$ k exec -it gvisor -- sh
+# uname -r
+4.4.0
+
+root@controlplane:~$ k get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNTIME
+controlplane   Ready    control-plane   17d   v1.37.1   172.30.1.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+node01         Ready    <none>          17d   v1.37.1   172.30.2.2    <none>        Ubuntu 24.04.5 LTS   6.8.0-147-generic (amd64)   containerd://2.2.1
+
+root@controlplane:~$ k exec -it gvisor -- sh
+# dmesg
+[    0.000000] Starting gVisor...
+[    0.356824] Creating process schedule...
+[    0.541989] Creating bureaucratic processes...
+[    1.023753] Feeding the init monster...
+[    1.343555] Conjuring /dev/null black hole...
+[    1.469828] Generating random numbers by fair dice roll...
+[    1.806790] Constructing home...
+[    2.172532] Singleplexing /dev/ptmx...
+[    2.361657] Searching for socket adapter...
+[    2.569016] Forking spaghetti code...
+[    2.755507] Rewriting operating system in Javascript...
+[    3.091367] Ready!
+
+root@controlplane:~$ docker info | grep -i runtime
+ Runtimes: io.containerd.runc.v2 runc runsc
+ Default Runtime: runc
