@@ -1,5 +1,18 @@
-Security-Context
------------------
+Security-Context [security settings and privileges]
+---------------------------------------------------
+There are two levels of SecurityContext:
+1. Pod-level SecurityContext – applies to all containers in a Pod (unless overridden at container level).
+2. Container-level SecurityContext – applies only to a specific container.
+
+Remember these 5 important hardening settings:
+1. runAsNonRoot: true
+2. allowPrivilegeEscalation: false
+3. readOnlyRootFilesystem: true
+4. capabilities: drop: [ALL]
+5. seccompProfile: type: RuntimeDefault
+
+privileged: true allows a container to run in privileged mode, giving it capabilities similar to the host machine's root user.
+allowPrivilegeEscalation: false → Don't allow processes to gain additional privileges.
 
 root@controlplane:~$ k run pod --image=busybox --command -o yaml --dry-run=client > pod.yml -- sh -c 'sleep 1d'
 root@controlplane:~$ ls
@@ -67,3 +80,135 @@ touch: test: Permission denied
 /tmp $ ls
 test
 /tmp $ exit
+
+#### Run Pod as non-root user??
+root@controlplane:~$ k run fe --image busybox -o yaml --dry-run=client > pod.yml -- sh -c 'sleep 1d'
+root@controlplane:~$ vi pod.yml 
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: fe
+  name: fe
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 3000
+  containers:
+  - args:
+    - sh
+    - -c
+    - sleep 1d
+    image: busybox
+    name: fe
+    securityContext: 
+      runAsNonRoot: true
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+root@controlplane:~$ k apply -f pod.yml
+pod/fe created
+root@controlplane:~$ k get po
+NAME   READY   STATUS    RESTARTS   AGE
+fe     1/1     Running   0          4s
+
+root@controlplane:~$ vi pod.yml 
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: fe
+  name: fe
+spec:
+  containers:
+  - args:
+    - sh
+    - -c
+    - sleep 1d
+    image: busybox
+    name: fe
+    securityContext: 
+      runAsNonRoot: true
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+root@controlplane:~$ k apply -f pod.yml 
+pod/fe created
+root@controlplane:~$ k describe po fe | grep Failed
+  Warning  Failed     9s (x17 over 3m27s)   kubelet            spec.containers{fe}: Error: container has runAsNonRoot and image will run as root (pod: "fe_default(6a34cb5d-6f3c-44fb-927a-f9d83f305b33)", container: fe)
+
+### why failed????
+#But you didn't specify runAsUser, and the BusyBox image defaults to running as root (UID 0).
+
+root@controlplane:~$ vi pod.yml 
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: fe
+  name: fe
+spec:
+  containers:
+  - args:
+    - sh
+    - -c
+    - sleep 1d
+    image: busybox
+    name: fe
+    securityContext: 
+      allowPrivilegeEscalation: true 
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+root@controlplane:~$ k apply -f pod.yml 
+pod/fe created
+root@controlplane:~$ k get po 
+NAME   READY   STATUS    RESTARTS   AGE
+fe     1/1     Running   0          4s
+root@controlplane:~$ k exec -it  fe -- sh
+/ # id
+uid=0(root) gid=0(root) groups=0(root),10(wheel)
+/ # cat /proc/1/status | grep Privs
+NoNewPrivs:     0
+/ # exit
+
+#### The container is still running as root, but privilege escalation is disabled.
+root@controlplane:~$ vi pod.yml 
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: fe
+  name: fe
+spec:
+  containers:
+  - args:
+    - sh
+    - -c
+    - sleep 1d
+    image: busybox
+    name: fe
+    securityContext: 
+      allowPrivilegeEscalation: false 
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+root@controlplane:~$ k apply -f pod.yml 
+pod/fe created
+root@controlplane:~$ k get po
+NAME   READY   STATUS    RESTARTS   AGE
+fe     1/1     Running   0          3s
+root@controlplane:~$ k exec -it  fe -- sh
+/ # cat /proc/1/status | grep Privs
+NoNewPrivs:     1  ## privilege escalation restriction is active.
+/ # id
+uid=0(root) gid=0(root) groups=0(root),10(wheel)
+/ # exit
