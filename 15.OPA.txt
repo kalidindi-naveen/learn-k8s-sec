@@ -1,0 +1,163 @@
+OPA: open policy agent
+----------------------
+OPA uses a policy language called Rego.
+
+OPA can help enforce security and compliance rules by deciding whether a resource should be allowed or rejected.
+You want to enforce these rules:
+1. No containers should run as root.
+2. No privileged containers.
+3. Every container must have resource limits.
+4. Only approved container registries are allowed.
+5. allowPrivilegeEscalation must be false.
+
+Remember these four concepts:
+1. OPA – General-purpose policy engine.
+2. Gatekeeper – Integrates OPA with Kubernetes admission control.
+3. ConstraintTemplate – Defines reusable Rego policy logic and creates a custom constraint kind.
+4. Constraint – Activates the policy and specifies which resources it applies to.
+
+Developer --> kubectl apply -f pod.yaml --> Kubernetes API Server --> Admission Controller --> OPA Policy Engine --> Evaluate Policy --> Policy Allowed ------> Pod Created [or] Policy Denied -------> Request Rejected
+
+Hands-on:
+---------
+Kubernetes Pod request -> Gatekeeper evaluates Rego -> 1 > 0 -> TRUE -> Violation generated -> Message: access denied hola many -> Pod creation DENIED
+
+root@controlplane:~$ k create -f https://raw.githubusercontent.com/killer-sh/cks-course-environment/master/course-content/opa/gatekeeper.yaml
+root@controlplane:~$ k -n gatekeeper-system get pod,svc
+NAME                                                 READY   STATUS    RESTARTS   AGE
+pod/gatekeeper-audit-d57586559-mnmw2                 0/1     Running   0          11s
+pod/gatekeeper-controller-manager-69b8b48bcd-gp8rb   0/1     Running   0          10s
+pod/gatekeeper-controller-manager-69b8b48bcd-gxn54   1/1     Running   0          11s
+pod/gatekeeper-controller-manager-69b8b48bcd-x4hv4   0/1     Running   0          10s
+
+NAME                                 TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+service/gatekeeper-webhook-service   ClusterIP   10.108.48.117   <none>        443/TCP   11s
+
+### always generates a violation, regardless of the Pod configuration.
+root@controlplane:~$ vi template.yml
+root@controlplane:~$ cat template.yml 
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8salwaysdeny
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAlwaysDeny
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          properties:
+            message:
+              type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8salwaysdeny
+        violation[{"msg": msg}] {
+          1 > 0
+          msg := input.parameters.message
+        }
+root@controlplane:~$ k apply -f template.yml 
+constrainttemplate.templates.gatekeeper.sh/k8salwaysdeny created
+root@controlplane:~$ k get constrainttemplates
+NAME            AGE
+k8salwaysdeny   14s
+root@controlplane:~$ vi k8salwaysdeny.yml
+root@controlplane:~$ cat k8salwaysdeny.yml 
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAlwaysDeny
+metadata:
+  name: pod-always-deny
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    message: "access denied hola many"
+root@controlplane:~$ k apply -f k8salwaysdeny.yml 
+k8salwaysdeny.constraints.gatekeeper.sh/pod-always-deny created
+root@controlplane:~$ k get k8salwaysdeny.constraints.gatekeeper.sh 
+NAME              AGE
+pod-always-deny   7s
+root@controlplane:~$ k run pod --image=nginx
+Error from server ([pod-always-deny] access denied hola many): admission webhook "validation.gatekeeper.sh" denied the request: [pod-always-deny] access denied hola many
+root@controlplane:~$ k describe K8sAlwaysDeny pod-always-deny
+root@controlplane:~$ k delete  K8sAlwaysDeny pod-always-deny
+k8salwaysdeny.constraints.gatekeeper.sh "pod-always-deny" deleted
+root@controlplane:~$ k run pod --image=nginx
+pod/pod created
+
+CKS-Style
+---------
+The security team wants to enforce the following policy across the Kubernetes cluster:
+1. Containers must not run in privileged mode.
+2. Pods with privileged: true must be rejected.
+3. Pods with privileged: false must be allowed.
+4. Pods without a privileged field must also be allowed.
+
+root@controlplane:~$ vi template.yml
+root@controlplane:~$ cat template.yml 
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8sblockprivileged
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sBlockPrivileged
+      validation:
+        openAPIV3Schema:
+          type: object
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sblockprivileged
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.privileged == true
+          msg := sprintf("Privileged container '%s' is not allowed", [container.name])
+        }
+root@controlplane:~$ kubectl apply -f template.yml
+constrainttemplate.templates.gatekeeper.sh/k8sblockprivileged created
+root@controlplane:~$ vi constraint.yml
+root@controlplane:~$ cat constraint.yml 
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sBlockPrivileged
+metadata:
+  name: deny-privileged-containers
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+root@controlplane:~$ k apply -f constraint.yml 
+k8sblockprivileged.constraints.gatekeeper.sh/deny-privileged-containers created
+root@controlplane:~$ vi pod.yml
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged-test
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    securityContext:
+      privileged: true
+root@controlplane:~$ k apply -f pod.yml 
+Error from server ([deny-privileged-containers] Privileged container 'nginx' is not allowed): error when creating "pod.yml": admission webhook "validation.gatekeeper.sh" denied the request: [deny-privileged-containers] Privileged container 'nginx' is not allowed
+root@controlplane:~$ 
+root@controlplane:~$ vi pod.yml 
+root@controlplane:~$ k delete po privileged-test --force
+Warning: Immediate deletion does not wait for confirmation that the running resource has been terminated. The resource may continue to run on the cluster indefinitely.
+Error from server (NotFound): pods "privileged-test" not found
+root@controlplane:~$ k apply -f pod.yml 
+pod/privileged-test created
+root@controlplane:~$ k get po
+NAME              READY   STATUS    RESTARTS   AGE
+privileged-test   1/1     Running   0          56s
