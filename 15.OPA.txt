@@ -85,6 +85,9 @@ pod-always-deny   7s
 root@controlplane:~$ k run pod --image=nginx
 Error from server ([pod-always-deny] access denied hola many): admission webhook "validation.gatekeeper.sh" denied the request: [pod-always-deny] access denied hola many
 root@controlplane:~$ k describe K8sAlwaysDeny pod-always-deny
+root@controlplane:~$ k describe k8salwaysdeny.constraints.gatekeeper.sh pod-always-deny | grep -i viol
+  Total Violations:  19
+  Violations:
 root@controlplane:~$ k delete  K8sAlwaysDeny pod-always-deny
 k8salwaysdeny.constraints.gatekeeper.sh "pod-always-deny" deleted
 root@controlplane:~$ k run pod --image=nginx
@@ -161,3 +164,130 @@ pod/privileged-test created
 root@controlplane:~$ k get po
 NAME              READY   STATUS    RESTARTS   AGE
 privileged-test   1/1     Running   0          56s
+
+###### Enforce NS labels
+root@controlplane:~$ k delete -f k8salwaysdeny.yml 
+k8salwaysdeny.constraints.gatekeeper.sh "pod-always-deny" deleted
+
+root@controlplane:~$ vi k8srequiredlabels_template.yml
+root@controlplane:~$ cat k8srequiredlabels_template.yml 
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          properties:
+            labels:
+              type: array
+              items: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("you must provide labels: %v", [missing])
+        }
+root@controlplane:~$ vi all_ns_must_have_cks.yml
+root@controlplane:~$ cat all_ns_must_have_cks.yml 
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: ns-must-have-cks
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Namespace"]
+  parameters:
+    labels: ["cks","test"]
+root@controlplane:~$ k apply -f k8srequiredlabels_template.yml 
+constrainttemplate.templates.gatekeeper.sh/k8srequiredlabels created
+root@controlplane:~$ k apply -f all_ns_must_have_cks.yml 
+k8srequiredlabels.constraints.gatekeeper.sh/ns-must-have-cks created
+
+root@controlplane:~$ k describe k8srequiredlabels.constraints.gatekeeper.sh | grep -i vio 
+  Total Violations:  7
+  Violations:
+root@controlplane:~$ k get ns | wc -l
+8
+
+root@controlplane:~$ vi ns.yml
+root@controlplane:~$ cat ns.yml 
+apiVersion: v1
+kind: Namespace
+metadata:
+  creationTimestamp: null
+  name: test
+  labels:
+    cks: amazing
+    test: app
+root@controlplane:~$ k apply -f ns.yml 
+namespace/test created
+
+#########all deployment should have some minimum replica count
+root@controlplane:~$ vi k8sminreplicacounttemplate.yml
+root@controlplane:~$ cat k8sminreplicacounttemplate.yml 
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8sminreplicacount
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sMinReplicaCount
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          properties:
+            min:
+              type: integer
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sminreplicacount
+
+        violation[{"msg": msg, "details": {"missing_replicas": missing}}] {
+          provided := input.review.object.spec.replicas
+          required := input.parameters.min
+          missing := required - provided
+          missing > 0
+          msg := sprintf("you must provide %v more replicas", [missing])
+        }
+root@controlplane:~$ k apply -f k8sminreplicacounttemplate.yml 
+constrainttemplate.templates.gatekeeper.sh/k8sminreplicacount created
+root@controlplane:~$ vi replicaconstrina.yml
+root@controlplane:~$ cat replicaconstrina.yml 
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sMinReplicaCount
+metadata:
+  name: deployment-must-have-min-replicas
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+  parameters:
+    min: 2
+root@controlplane:~$ k apply -f replicaconstrina.yml 
+k8sminreplicacount.constraints.gatekeeper.sh/deployment-must-have-min-replicas created
+
+root@controlplane:~$ k describe K8sMinReplicaCount deployment-must-have-min-replicas | grep -i vio
+  Total Violations:  3
+  Violations:
+root@controlplane:~$ k create deploy test --image=nginx
+error: failed to create deployment: admission webhook "validation.gatekeeper.sh" denied the request: [deployment-must-have-min-replicas] you must provide 1 more replicas
+root@controlplane:~$ k create deploy test --image=nginx --replicas=3
+deployment.apps/test created
