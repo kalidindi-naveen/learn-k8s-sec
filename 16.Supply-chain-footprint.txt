@@ -86,3 +86,72 @@ app3:latest   639ce874f6b4       10.9MB             0B
 root@controlplane:~/non-root$ docker run app3
 user: appuser id: 100
 
+root@controlplane:~$ mkdir read-only
+root@controlplane:~$ cd read-only/
+root@controlplane:~/read-only$ vi Dockerfile
+root@controlplane:~/read-only$ cat Dockerfile 
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine
+RUN chmod a-w /etc
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
+COPY --from=0 /app /home/appuser/
+USER appuser
+CMD ["/home/appuser/app"]
+root@controlplane:~/read-only$ cp ../app.go .
+root@controlplane:~/read-only$ docker build -t app4 .
+root@controlplane:~/read-only$ docker image list | grep app4
+WARNING: This output is designed for human readability. For machine-readable output, please use --format.
+app4:latest   0a3635c8a2f5       10.9MB             0B  
+root@controlplane:~/read-only$ docker run -d app4
+9986678aecbde233f7bb7caddb561af3aa2ef65432fd44cf019d97cdca022553
+root@controlplane:~/read-only$ docker ps
+CONTAINER ID   IMAGE     COMMAND               CREATED         STATUS         PORTS     NAMES
+9986678aecbd   app4      "/home/appuser/app"   5 seconds ago   Up 5 seconds             sharp_goldwasser
+root@controlplane:~/read-only$ docker exec -it 99866 sh
+/ $ ls -al
+total 68
+drwxr-xr-x    1 root     root          4096 Nov 27 10:48 .
+drwxr-xr-x    1 root     root          4096 Nov 27 10:48 ..
+-rwxr-xr-x    1 root     root             0 Nov 27 10:48 .dockerenv
+drwxr-xr-x    2 root     root          4096 Nov  5 09:19 bin
+drwxr-xr-x    5 root     root           340 Nov 27 10:48 dev
+dr-xr-xr-x    1 root     root          4096 Nov 27 10:48 etc ##compare the etc directory permission
+
+##finally lets remove the shell access
+root@controlplane:~$ mkdir rm-sh
+root@controlplane:~$ cd rm-sh/
+root@controlplane:~/rm-sh$ vi Dockerfile
+root@controlplane:~/rm-sh$ cat Dockerfile 
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine
+RUN chmod a-w /etc
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
+RUN rm -rf /bin/*
+COPY --from=0 /app /home/appuser/
+USER appuser
+CMD ["/home/appuser/app"]
+root@controlplane:~/rm-sh$ cp ../app.go .
+root@controlplane:~/rm-sh$ docker build -t app5 .
+root@controlplane:~/rm-sh$ docker image list | grep app5
+WARNING: This output is designed for human readability. For machine-readable output, please use --format.
+app5:latest   00afd30a2ef5       10.9MB             0B
+root@controlplane:~/rm-sh$ docker run -d app5
+2d7fbbaa61355b27a4036a22fd65e781ff8ebf37c864696a8c8715bbb4321581
+root@controlplane:~/rm-sh$ docker ps
+CONTAINER ID   IMAGE     COMMAND               CREATED         STATUS         PORTS     NAMES
+2d7fbbaa6135   app5      "/home/appuser/app"   7 seconds ago   Up 7 seconds             festive_kepler
+9986678aecbd   app4      "/home/appuser/app"   4 minutes ago   Up 4 minutes             sharp_goldwasser
+root@controlplane:~/rm-sh$ docker exec -itd 2d7f sh
+Error response from daemon: OCI runtime exec failed: exec failed: unable to start container process: exec: "sh": executable file not found in $PATH
+root@controlplane:~/rm-sh$ docker exec -itd 2d7f bash
+Error response from daemon: OCI runtime exec failed: exec failed: unable to start container process: exec: "bash": executable file not found in $PATH
