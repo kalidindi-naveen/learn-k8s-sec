@@ -1,0 +1,53 @@
+Whitelist Image Need to Download from paticullar registry
+
+root@controlplane:~$ vi k8strustedimage_template.yml
+root@controlplane:~$ cat k8strustedimage_template.yml 
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8strustedimages
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sTrustedImages
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8strustedimages
+
+        violation[{"msg": msg}] {
+          image := input.review.object.spec.containers[_].image
+          not startswith(image, "docker.io/")
+          not startswith(image, "k8s.gcr.io/")
+          msg := "not trusted image!"
+        }
+root@controlplane:~$ k apply -f k8strustedimage_template.yml
+constrainttemplate.templates.gatekeeper.sh/k8strustedimages created
+root@controlplane:~$ vi k8strustedimage.yml
+root@controlplane:~$ k apply -f k8strustedimage.yml 
+k8strustedimages.constraints.gatekeeper.sh/pod-trusted-image created
+root@controlplane:~$ cat k8strustedimage.yml 
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sTrustedImages
+metadata:
+  name: pod-trusted-image
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+root@controlplane:~$ k get constrainttemplates
+NAME               AGE
+k8strustedimages   51s
+root@controlplane:~$ k get k8strustedimages
+NAME                AGE
+pod-trusted-image   32s
+root@controlplane:~$ k describe k8strustedimages pod-trusted-image
+root@controlplane:~$ k describe k8strustedimages pod-trusted-image | grep -i viol
+  Total Violations:  16
+  Violations:
+root@controlplane:~$ k run nginx --image=nginx
+Error from server ([pod-trusted-image] not trusted image!): admission webhook "validation.gatekeeper.sh" denied the request: [pod-trusted-image] not trusted image!
+root@controlplane:~$ k run nginx --image=docker.io/nginx
+pod/nginx created
