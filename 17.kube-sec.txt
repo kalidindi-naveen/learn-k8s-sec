@@ -1,0 +1,50 @@
+KubeSec – Kubernetes YAML security scanner
+------------------------------------------
+OPA/Gatekeeper = Define policies → Evaluate → Enforce.
+
+KubeSec = Scan → Identify → Fix → Rescan.
+
+Purpose: Identify security issues in Kubernetes workloads before deploying them into the cluster.
+KubeSec is used for static security analysis of Kubernetes YAML.
+
+root@controlplane:~$ k run nginx --image=nginx -o yaml --dry-run=client > pod.yml
+root@controlplane:~$ cat pod.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: nginx
+  name: nginx
+spec:
+  containers:
+  - image: nginx
+    name: nginx
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+
+root@controlplane:~$ docker run -i kubesec/kubesec:512c5e0 scan /dev/stdin < pod.yml | grep score
+    "message": "Passed with a score of 0 points",
+    "score": 0,
+
+root@controlplane:~$ vi nginx.yml 
+root@controlplane:~$ cat nginx.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: nginx
+  name: nginx
+spec:
+  containers:
+  - image: nginx
+    name: nginx
+    resources: {}
+    securityContext:
+      runAsNonRoot: true
+
+root@controlplane:~$ docker run -i kubesec/kubesec:512c5e0 scan /dev/stdin < nginx.yml | grep score
+    "message": "Passed with a score of 1 points",
+    "score": 1,
