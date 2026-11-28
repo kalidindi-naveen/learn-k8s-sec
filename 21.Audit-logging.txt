@@ -1,0 +1,42 @@
+Kubernetes does not enable audit logging by default in a standard kubeadm cluster.
+
+root@controlplane:~$ cd /etc/kubernetes/
+root@controlplane:/etc/kubernetes$ mkdir audit
+root@controlplane:/etc/kubernetes$ cd audit
+root@controlplane:/etc/kubernetes$ vi policy.yaml
+root@controlplane:/etc/kubernetes$ cat policy.yaml 
+apiVersion: audit.k8s.io/v1 
+kind: Policy
+rules:
+  - level: Metadata
+root@controlplane:/etc/kubernetes$ vi manifests/kube-apiserver.yaml 
+##below the contianer defination
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --audit-policy-file=/etc/kubernetes/audit/policy.yaml ##this is the path of your policy
+    - --audit-log-path=/etc/kubernetes/audit/logs/audit.log #log path
+    - --audit-log-maxbackup=5 #number of logs
+    - --audit-log-maxsize=500 #size of the logs
+###################################################
+lets add the volume in the volume block
+ volumes:
+   - hostPath:
+      path: /etc/kubernetes/audit
+      type: DirectoryOrCreate
+    name: audit
+  
+##lets add the mount path in the container block
+- mountPath: /etc/kubernetes/audit
+  name: audit
+
+root@controlplane:/etc/kubernetes$ crictl ps -a | grep kube-apiserver
+df753d89a31ab       82ae6c548117f       10 seconds ago       Running             kube-apiserver            0                   eb7d90cbd9407       kube-apiserver-controlplane               kube-system
+root@controlplane:/etc/kubernetes$ k create secret generic log-secret --from-literal=user=admin
+secret/log-secret created
+root@controlplane:/etc/kubernetes$ cd audit/
+root@controlplane:/etc/kubernetes/audit$ ls
+logs  policy.yml
+root@controlplane:/etc/kubernetes/audit$ cat logs/audit.log | grep log-secret
+{"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"52a82a90-b325-43bb-a06a-22bf077ce029","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/default/secrets?fieldManager=kubectl-create\u0026fieldValidation=Strict","verb":"create","user":{"username":"kubernetes-admin","groups":["kubeadm:cluster-admins","system:authenticated"],"extra":{"authentication.kubernetes.io/credential-id":["X509SHA256=0287a0652c87cc20643477eb4d26addd3be052ee0d1560f2abe0f8993675b8a5"]}},"sourceIPs":["172.30.1.2"],"userAgent":"kubectl/v1.37.1 (linux/amd64) kubernetes/f78e722","objectRef":{"resource":"secrets","namespace":"default","name":"log-secret","apiVersion":"v1"},"responseStatus":{"metadata":{},"code":201},"requestReceivedTimestamp":"2026-11-28T04:40:19.509694Z","stageTimestamp":"2026-11-28T04:40:19.515325Z","annotations":{"authorization.k8s.io/decision":"allow","authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding \"kubeadm:cluster-admins\" of ClusterRole \"cluster-admin\" to Group \"kubeadm:cluster-admins\""}}
